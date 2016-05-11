@@ -16,9 +16,9 @@ from .jacobian import Jacobian, UnitJacobian
 from . import stats
 
 from . import gmix
+from .observation import Observation
 
-def test_bde_creation():
-    import images
+def test_bde_creation(nsub=1, do_plot=False):
 
     psf=gmix.GMixModel([0.0, 0.0, 0.0, 0.0, 4.0, 1.0], "gauss")
 
@@ -57,7 +57,7 @@ def test_bde_creation():
     gm0 = gmix.GMixModel(pars, model)
     gm = gm0.convolve(psf)
 
-    im=gm.make_image(dims, jacobian=jacob)
+    im=gm.make_image(dims, jacobian=jacob, nsub=nsub)
 
     bpars=[cen1, cen2, be1, be2, bT, bF]
     dpars=[cen1, cen2, de1, de2, dT, dF]
@@ -68,15 +68,63 @@ def test_bde_creation():
     bgm=bgm0.convolve(psf)
     dgm=dgm0.convolve(psf)
 
-    bim=bgm.make_image(dims, jacobian=jacob)
-    dim=dgm.make_image(dims, jacobian=jacob)
+    bim=bgm.make_image(dims, jacobian=jacob, nsub=nsub)
+    dim=dgm.make_image(dims, jacobian=jacob, nsub=nsub)
 
     imcomb = bim + dim
 
-    images.compare_images(im, imcomb,
-                          label1='bde im',
-                          label2='bim + dim',
-                         width=1000,height=1000)
+    if do_plot:
+        import images
+        images.compare_images(im, imcomb,
+                              label1='bde im',
+                              label2='bim + dim',
+                             width=1000,height=1000)
+
+    psfim=psf.make_image(dims, jacobian=jacob)
+    psfobs = Observation(psfim, gmix=psf)
+    obs = Observation(im, psf=psfobs, jacobian=jacob)
+
+    return obs,pars
+
+def test_fit_BDE(nsub_render=1, nsub=1):
+
+    import time
+
+    model = "bde"
+    obs, pars = test_bde_creation(nsub=nsub)
+
+    nwalkers=80
+    burnin=400
+    nstep=400
+
+    print("making guess")
+    guess=zeros( (nwalkers, len(pars)) )
+    guess[:,0] = 0.1*srandu(nwalkers)
+    guess[:,1] = 0.1*srandu(nwalkers)
+    guess[:,2] = pars[2] + 0.1*srandu(nwalkers)
+    guess[:,3] = pars[3] + 0.1*srandu(nwalkers)
+    guess[:,4] = pars[4]*(1.0 + 0.1*srandu(nwalkers))
+    guess[:,5] = pars[5] + 0.1*srandu(nwalkers)
+    guess[:,6] = pars[6] + 0.1*srandu(nwalkers)
+    guess[:,7] = pars[7]*(1.0 + 0.1*srandu(nwalkers))
+    # fluxes
+    guess[:,8] = pars[8]*(1.0 + 0.1*srandu(nwalkers))
+    guess[:,9] = pars[9]*(1.0 + 0.1*srandu(nwalkers))
+
+    # one run to warm up the jit compiler
+    mc=MCMCSimple(obs, model, nwalkers=nwalkers, nsub=nsub)
+    print("burnin")
+    pos=mc.run_mcmc(guess, burnin)
+    print("steps")
+    pos=mc.run_mcmc(pos, nstep)
+
+    mc.calc_result()
+    res=mc.get_result()
+
+    print_pars(pars,            front='true:')
+    print_pars(res['pars'],     front='pars:')
+    print_pars(res['pars_err'], front='err: ')
+
 
 def test_mcmc_psf(model="gauss",
                   g1=0.0,
@@ -353,7 +401,7 @@ def test_model(model,
         labels=[r"$cen_1$", r"$cen_2$",
                 r"$e_1$",r"$e_2$",
                 r"$T$",r"$F$"]
-        figure = triangle.corner(trials, 
+        figure = triangle.corner(trials,
                                  labels=labels,
                                  quantiles=[0.16, 0.5, 0.84],
                                  show_titles=True,
@@ -390,9 +438,9 @@ def test_model_margsky_many(Tfracs=None, T_psf=4.0, show=False, ntrial=10, skyfa
     #Tfracs = numpy.array([2.0**2])
     #Tfracs = numpy.array([0.5**2])
     # Tpsf/Tobj
-    Pfracs =1.0/Tfracs 
+    Pfracs =1.0/Tfracs
     Pfracs.sort()
-    
+
     plt.add(biggles.Curve(Pfracs, Pfracs*0))
 
     e1colors=['blue','steelblue']
@@ -461,7 +509,7 @@ def test_model_margsky_many(Tfracs=None, T_psf=4.0, show=False, ntrial=10, skyfa
             #g1[i],g2[i] = e1s.mean(), e2s.mean()
             #g1std[i],g2std[i] = e1s.std(), e2s.std()
             #g1err[i],g2err[i] = e1s.std()/sqrt(ntrial), e2s.std()/sqrt(ntrial)
-        
+
         e1pts=biggles.Points(Pfracs, g1, color=e1colors[imarg], type=e1types[imarg])
         e2pts=biggles.Points(Pfracs, g2, color=e2colors[imarg], type=e2types[imarg])
         e1c=biggles.Curve(Pfracs, g1, color=e1colors[imarg], type=e1ctypes[imarg])
@@ -551,7 +599,7 @@ def test_model_margsky(model,
     gm_obj0=gmix.GMixModel(pars_obj, model)
 
     gm=gm_obj0.convolve(gm_psf)
-    
+
     pcen=(dim-1)/2.
     pj=UnitJacobian(pcen,pcen)
     #pj=j
@@ -1041,7 +1089,7 @@ def test_guess_coellip(ngauss,
 
 
 def make_sersic_images(model, hlr, flux, n, noise, g1, g2):
-    import galsim 
+    import galsim
 
     psf_sigma=1.414
     pixel_scale=1.0
@@ -1186,7 +1234,7 @@ def test_sersic(model,
                          g_prior,
                          T_prior,
                          counts_prior)
- 
+
 
     print("max fit")
     while True:
@@ -1221,7 +1269,7 @@ def test_sersic(model,
                               width=1900,height=1200,
                               separate=False)
             model_im=gmc.make_image(im.shape, jacobian=jacob)
-            images.compare_images(im, model_im) 
+            images.compare_images(im, model_im)
 
         res=mc_obj.get_result()
 
@@ -1491,7 +1539,7 @@ def test_model_mb(model,
     import time
 
     from ngmix.joint_prior import PriorSimpleSep
- 
+
     jfac2=jfac**2
 
     dims=[25,25]
@@ -1650,7 +1698,7 @@ def test_model_mb(model,
         print('P:',res['P'])
         print('Q:',res['Q'])
         print('R:',res['R'])
-           
+
     if show:
         mc_obj.make_plots(show=True, do_residual=True)
 
@@ -1884,7 +1932,7 @@ def _do_lm_fit(obs, prior, sample_prior, model, prior_during=True):
         try:
 
             lm_fitter.run_lm(guess)
-        
+
             res=lm_fitter.get_result()
 
             if res['flags']==0:
@@ -1917,7 +1965,7 @@ def test_lm_metacal(model,
         testing both prior during and not during
 
         the metacal is unbiased when applying the prior
-        
+
         regular seems to be unbiased when not applying the prior
 
     nsub_render=16
@@ -2142,7 +2190,7 @@ def test_lm_psf_simple_sub_many(num, model, g1=0.3, g2=0.0, **keys):
             g1vals[i]=pars[2]
             g2vals[i]=pars[3]
             s2nvals[i]=res['s2n_w']
-        
+
     w,=where(used==1)
 
     g1vals=g1vals[w]
@@ -2200,7 +2248,7 @@ def test_lm_psf_simple_sub(model,
     guess = pars.copy()
     guess[0] += 0.5*srandu()
     guess[1] += 0.5*srandu()
-    
+
     while True:
         guess[2] = g1 + 0.1*srandu()
         guess[3] = g2 + 0.1*srandu()
@@ -2241,7 +2289,7 @@ def test_nm_psf_coellip(g1=0.0,
                         seed=None,
                         show=False):
     """
-    test nelder mead fit of turb psf with coellip 
+    test nelder mead fit of turb psf with coellip
     """
     from numpy.random import randn
     import images
@@ -2527,7 +2575,7 @@ def test_max(model, sigma=2.82, counts=100.0, noise=0.001, nimages=1,
         print('psf numiter:',res_psf['numiter'],'fdiff:',res_psf['fdiff'])
 
     psf_fit=mc_psf.get_gmix()
-    
+
     if verbose:
         print("fit psf T:",psf_fit.get_T())
 
@@ -2614,7 +2662,7 @@ def test_max(model, sigma=2.82, counts=100.0, noise=0.001, nimages=1,
 
     #
     # emcee fitting
-    # 
+    #
     if do_emcee:
         if verbose:
             print("fitting with emcee")
@@ -2937,7 +2985,7 @@ def test_covsample_log(model,
 
         if nm_res['flags']==0:
             break
-        
+
         nm_guess[0] = pars_obj[0] + 0.01*srandu()
         nm_guess[1] = pars_obj[1] + 0.01*srandu()
         nm_guess[2] = pars_obj[2] + 0.01*srandu()
@@ -3020,7 +3068,7 @@ def test_covsample_log(model,
         maxg1=max( g1.max(), g1s.max() )
         ming2=min( g2.min(), g2s.min() )
         maxg2=max( g2.max(), g2s.max() )
-        
+
         mcmc_fitter.make_plots(show=True)
         lin_trials=trials.copy()
         lin_trials[:,4] = 10.0**lin_trials[:,4]
@@ -3230,7 +3278,7 @@ def test_isample(model,
 
         if max_res['flags']==0:
             break
-        
+
         max_guess[0] = pars_obj[0] + 0.01*srandu()
         max_guess[1] = pars_obj[1] + 0.01*srandu()
         max_guess[2] = 0.1*srandu()
@@ -3273,7 +3321,7 @@ def test_isample(model,
     print_pars(res['pars_err'], front='perr: ')
     print()
 
-    
+
 
     if show:
         import biggles
@@ -3476,7 +3524,7 @@ def test_fracdev(fracdev=0.3,
     if use_logpars:
         pefitpars[4:] = exp(pefitpars[4:])
         pdfitpars[4:] = exp(pdfitpars[4:])
-    
+
     if verbose:
         print_pars(pefitpars,front="    efitpars: ")
         print_pars(pdfitpars,front="    dfitpars: ")
@@ -3522,7 +3570,7 @@ def test_fracdev(fracdev=0.3,
     cfitter=LMComposite(obs, fduse, TdByTe,prior=prior,
                         use_logpars=use_logpars)
     cfitter.go(guess)
-    
+
     cres=cfitter.get_result()
 
     if cres['flags'] != 0:
@@ -3552,7 +3600,7 @@ def test_fracdev(fracdev=0.3,
         psf_gmix = pfitter.get_gmix()
         dgm=dgm0.convolve(psf_gmix)
 
- 
+
         cgm0=cfitter.get_gmix()
         psf_gmix = pfitter.get_gmix()
         cgm=cgm0.convolve(psf_gmix)
@@ -3637,7 +3685,7 @@ def test_metacal(model, show=False, **kw):
         width=1100
         height=900
         #images.compare_images(obs.image, R_obs1m.image, label1='im',label2='sh 1m')
-        plt=images.compare_images(obs.image, R_obs1p.image, 
+        plt=images.compare_images(obs.image, R_obs1p.image,
                                   label1='im',label2='sh 1p',
                                   width=width,height=height)
         plt.write_img(width,height,'/astro/u/esheldon/tmp/sh1p-diff.png')
@@ -3808,7 +3856,7 @@ def test_fit_gauss1_many(num,
 
         grid=eu.plotting.Grid(4)
         for i,field in enumerate(types):
-            
+
             tmp=data[field]
 
             m=mpars[i]
@@ -3937,7 +3985,7 @@ def test_fit_gauss1(model='gauss',
             from .em import fit_em
             guess=gmpsf.copy()
             pfitter=fit_em(psfobs, guess, maxiter=maxiter, tol=tol)
-            
+
             pres=pfitter.get_result()
             if pres['flags'] != 0:
                 print("psf failure")
@@ -4118,7 +4166,7 @@ def test_fit_gauss1(model='gauss',
             guess[3] = M2guess
             guess[4] = T*(1.0+0.1*srandu())
             guess[5] = flux*(1.0 + 0.1*srandu())
- 
+
             boot.fit_max(max_pars, guess=guess)
             boot.try_replace_cov(cov_pars)
             mres=boot.get_max_fitter().get_result()
@@ -4500,7 +4548,7 @@ def test_fixT_many(num, model, **keys):
 
         except BootGalFailure:
             pass
-            
+
     w,=where(used==1)
 
     g1vals=g1vals[w]
@@ -4569,7 +4617,7 @@ def test_gonly(model, verbose=True, show=False, T_obj=16.0, do_control=False, **
     T_prior=priors.FlatPrior(-10.0,15.0)
     counts_prior=priors.FlatPrior(-10.0,15.0)
 
- 
+
     prior=joint_prior.PriorSimpleSep(cen_prior,
                                      g_prior,
                                      T_prior,
@@ -4634,7 +4682,7 @@ def test_gonly_many(num, model, **keys):
 
         except BootGalFailure:
             pass
-            
+
     w,=where(used==1)
 
     g1vals=g1vals[w]
@@ -4710,7 +4758,7 @@ def guess_em_ngauss(ngauss, T):
 
 
 def test_em_model(model,
-                  ngauss=None, 
+                  ngauss=None,
                   maxiter=4000, tol=1.0e-6,
                   ntry=10,
                   verbose=True, show=False, T_obj=16.0, do_control=False, **kw):
@@ -4746,7 +4794,7 @@ def test_em_model(model,
             print(guess)
 
         mc.go(guess, sky, maxiter=maxiter, tol=tol)
-    
+
         res=mc.get_result()
         if res['flags']==0:
             break
@@ -4852,7 +4900,7 @@ def test_moms(model='gauss',
         guess=gmix.GMixModel(guess_pars, 'gauss')
 
         mc.go(guess, sky, maxiter=maxiter, tol=1.0e-6)
-    
+
         emres=mc.get_result()
         if emres['flags']==0:
             emres['cen'] = mc.get_gmix().get_cen()
@@ -4931,12 +4979,12 @@ def test_moms_many(num, method='lm', use_errors=False, eps=None,show=False, **ke
     M1_err=M1_err[w]
     M2_err=M2_err[w]
     s2n=s2n[w]
-    
+
     m,s,err=eu.stat.sigma_clip(s2n,get_err=True)
     print("s/n: %g +/- %g +/- %g" % (m,s,err))
     nvals={}
-    types=[(I,I_err,'I'), 
-           (T,T_err,'T'), 
+    types=[(I,I_err,'I'),
+           (T,T_err,'T'),
            (M1,M1_err,'M1'),
            (M2,M2_err,'M2')]
 
@@ -4974,7 +5022,7 @@ def test_moms_many(num, method='lm', use_errors=False, eps=None,show=False, **ke
         grid=eu.plotting.Grid(4)
         for i,tup in enumerate(types):
             data,errs,label=tup
-            
+
             m,s=eu.stat.sigma_clip(data)
             binsize=0.2*s
             minval=m-4*s
@@ -5083,7 +5131,7 @@ def fit_moffat_many(ngauss, n=100, g1=0.05, g2=0.05, verbose=False, **kw):
     g2m=g2vals.mean()
     g2e=g2vals.std()/numpy.sqrt(n)
     '''
-    
+
     print("chi2per: %g +/- %g" % (chi2m,chi2err))
     print("g1: %g +/- %g" % (g1m,g1e))
     if g1 != 0.0:
@@ -5336,6 +5384,3 @@ class MoffatFitter(object):
                                     g_prior,
                                     T_prior,
                                     F_prior)
-
-
-
