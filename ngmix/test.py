@@ -18,11 +18,11 @@ from . import stats
 from . import gmix
 from .observation import Observation
 
-def test_bde_creation(nsub=1, do_plot=False):
+def test_bde_creation(nsub=1, noise=1e-3, do_plot=False):
 
     psf=gmix.GMixModel([0.0, 0.0, 0.0, 0.0, 4.0, 1.0], "gauss")
 
-    dims=[25,25]
+    dims=[32,32]
 
     cen1pix=(dims[0]-1.0)/2.0
     cen2pix=(dims[1]-1.0)/2.0
@@ -33,14 +33,14 @@ def test_bde_creation(nsub=1, do_plot=False):
     cen2=0.0
 
     be1 = 0.1
-    be2 = 0.2
-    bT = 20.0
-    bF = 1.0
+    be2 = 0.1
+    bT = 10.0
+    bF = 3.0
 
-    de1 = -0.05
+    de1 = -0.25
     de2 = 0.1
-    dT = 18.0
-    dF = 2.0
+    dT = 20.0
+    dF = 1.0
 
     model="bde"
     pars=[
@@ -58,6 +58,7 @@ def test_bde_creation(nsub=1, do_plot=False):
     gm = gm0.convolve(psf)
 
     im=gm.make_image(dims, jacobian=jacob, nsub=nsub)
+    im += noise*numpy.random.randn(im.size).reshape(im.shape)
 
     bpars=[cen1, cen2, be1, be2, bT, bF]
     dpars=[cen1, cen2, de1, de2, dT, dF]
@@ -82,7 +83,9 @@ def test_bde_creation(nsub=1, do_plot=False):
 
     psfim=psf.make_image(dims, jacobian=jacob)
     psfobs = Observation(psfim, gmix=psf)
-    obs = Observation(im, psf=psfobs, jacobian=jacob)
+
+    wt_obj=zeros(im.shape) + 1./noise**2
+    obs = Observation(im, weight=wt_obj, psf=psfobs, jacobian=jacob)
 
     return obs,pars
 
@@ -112,7 +115,7 @@ def test_fit_BDE(nsub_render=1, nsub=1):
     guess[:,9] = pars[9]*(1.0 + 0.1*srandu(nwalkers))
 
     # one run to warm up the jit compiler
-    mc=MCMCSimple(obs, model, nwalkers=nwalkers, nsub=nsub)
+    mc=MCMCBDE(obs, model, nwalkers=nwalkers, nsub=nsub)
     print("burnin")
     pos=mc.run_mcmc(guess, burnin)
     print("steps")
