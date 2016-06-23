@@ -34,13 +34,13 @@ def test_bde_creation(nsub=1, noise=1e-3, do_plot=False):
 
     be1 = 0.1
     be2 = 0.1
-    bT = 10.0
-    bF = 3.0
+    bT = 20.0
+    bF = 2.0
 
     de1 = -0.25
     de2 = 0.1
     dT = 20.0
-    dF = 1.0
+    dF = 2.0
 
     model="bde"
     pars=[
@@ -89,16 +89,16 @@ def test_bde_creation(nsub=1, noise=1e-3, do_plot=False):
 
     return obs,pars
 
-def test_fit_BDE(nsub_render=1, nsub=1):
+def test_fit_BDE(nsub_render=1, nsub=1, noise=1e-3, steps=400):
 
     import time
 
     model = "bde"
-    obs, pars = test_bde_creation(nsub=nsub)
+    obs, pars = test_bde_creation(nsub=nsub, noise=noise)
 
     nwalkers=80
-    burnin=400
-    nstep=400
+    burnin=steps
+    nstep=steps
 
     print("making guess")
     guess=zeros( (nwalkers, len(pars)) )
@@ -114,8 +114,16 @@ def test_fit_BDE(nsub_render=1, nsub=1):
     guess[:,8] = pars[8]*(1.0 + 0.1*srandu(nwalkers))
     guess[:,9] = pars[9]*(1.0 + 0.1*srandu(nwalkers))
 
-    # one run to warm up the jit compiler
-    mc=MCMCBDE(obs, model, nwalkers=nwalkers, nsub=nsub)
+
+    # contruct prior: independent for now
+    cen_prior=priors.CenPrior(0.0, 0.0, 0.1, 0.1)
+    gb_prior = gd_prior = priors.GPriorBA(0.3)
+    Tb_prior = Td_prior = priors.FlatPrior(-1.0, 100.0)
+    Fb_prior = Fd_prior = priors.FlatPrior(-0.97, 100)
+    bde_prior = joint_prior.PriorBDE(cen_prior, gb_prior, Tb_prior, gd_prior, Td_prior, Fb_prior, Fd_prior)
+
+
+    mc=MCMCBDE(obs, model, nwalkers=nwalkers, nsub=nsub, prior=bde_prior)
     print("burnin")
     pos=mc.run_mcmc(guess, burnin)
     print("steps")
@@ -127,6 +135,7 @@ def test_fit_BDE(nsub_render=1, nsub=1):
     print_pars(pars,            front='true:')
     print_pars(res['pars'],     front='pars:')
     print_pars(res['pars_err'], front='err: ')
+    return obs, mc, res
 
 
 def test_mcmc_psf(model="gauss",
